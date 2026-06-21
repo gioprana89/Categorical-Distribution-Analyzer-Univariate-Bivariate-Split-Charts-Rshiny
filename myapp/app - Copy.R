@@ -135,16 +135,6 @@ safe_number <- function(x, default_value, min_value = NULL, max_value = NULL) {
   out
 }
 
-round_numeric_df <- function(df, digits = 4) {
-  df <- as.data.frame(df, check.names = FALSE)
-  digits <- safe_number(digits, default_value = 4, min_value = 0, max_value = 12)
-  numeric_cols <- vapply(df, is.numeric, logical(1))
-  if (any(numeric_cols)) {
-    df[numeric_cols] <- lapply(df[numeric_cols], function(x) round(x, digits = digits))
-  }
-  df
-}
-
 parse_order_text <- function(x) {
   if (is.null(x) || length(x) == 0 || is.na(x) || !nzchar(trimws(as.character(x)))) return(character(0))
   out <- trimws(unlist(strsplit(as.character(x), ",", fixed = TRUE)))
@@ -345,14 +335,9 @@ create_univariate_bar_plot <- function(chart_df, manual_colors,
                                        legend_title_size = 10,
                                        legend_text_size = 9,
                                        x_text_angle = 35,
-                                       legend_title = "Category",
-                                       x_axis_title = "Category",
                                        digits = 2) {
   validate(need(nrow(chart_df) > 0, "Univariate chart data is empty."))
   th <- get_theme(theme_name)
-  panel_cols <- safe_number(panel_cols, 2, 1, 10)
-  if (is.null(legend_title) || !nzchar(trimws(as.character(legend_title)))) legend_title <- "Category"
-  if (is.null(x_axis_title) || !nzchar(trimws(as.character(x_axis_title)))) x_axis_title <- "Category"
   chart_df$Y_Value <- if (y_metric == "Frequency") chart_df$Frequency else chart_df$Percentage
   chart_df$Label <- ""
   if (label_mode == "Frequency") {
@@ -368,7 +353,7 @@ create_univariate_bar_plot <- function(chart_df, manual_colors,
     geom_col(width = bar_width, color = "white", linewidth = 0.25) +
     scale_fill_manual(values = manual_colors, drop = FALSE) +
     facet_wrap(~ Variable, ncol = panel_cols, scales = facet_scales) +
-    labs(title = title, subtitle = subtitle, x = x_axis_title, y = y_label, fill = legend_title) +
+    labs(title = title, subtitle = subtitle, x = "Category", y = y_label, fill = "Category") +
     statcal_theme_gg(
       theme_name = theme_name,
       title_size = title_size,
@@ -439,14 +424,9 @@ create_bivariate_bar_plot <- function(chart_df, manual_colors,
                                       legend_title_size = 10,
                                       legend_text_size = 9,
                                       x_text_angle = 35,
-                                      legend_title = "Dependent Category",
-                                      x_axis_title = "Independent Category",
                                       digits = 2) {
   validate(need(nrow(chart_df) > 0, "Bivariate chart data is empty."))
   th <- get_theme(theme_name)
-  panel_cols <- safe_number(panel_cols, 2, 1, 10)
-  if (is.null(legend_title) || !nzchar(trimws(as.character(legend_title)))) legend_title <- "Dependent Category"
-  if (is.null(x_axis_title) || !nzchar(trimws(as.character(x_axis_title)))) x_axis_title <- "Independent Category"
   chart_df$Y_Value <- if (y_metric == "Frequency") chart_df$Frequency else chart_df$Percentage
   chart_df$Label <- ""
   if (label_mode == "Frequency") {
@@ -463,7 +443,7 @@ create_bivariate_bar_plot <- function(chart_df, manual_colors,
     geom_col(width = bar_width, position = position_obj, color = "white", linewidth = 0.25) +
     scale_fill_manual(values = manual_colors, drop = FALSE) +
     facet_wrap(~ `Independent Variable`, ncol = panel_cols, scales = facet_scales) +
-    labs(title = title, subtitle = subtitle, x = x_axis_title, y = y_label, fill = legend_title) +
+    labs(title = title, subtitle = subtitle, x = "Independent category", y = y_label, fill = "Dependent category") +
     statcal_theme_gg(
       theme_name = theme_name,
       title_size = title_size,
@@ -487,216 +467,6 @@ create_bivariate_bar_plot <- function(chart_df, manual_colors,
     p <- p + coord_flip()
   }
   p + theme(plot.background = element_rect(fill = th$figure_facecolor, color = NA))
-}
-
-
-# ============================================================
-# CATEGORICAL ASSOCIATION AND SIGNIFICANCE TESTS
-# ============================================================
-
-make_contingency_table <- function(df, row_var, col_var, row_order = NULL, col_order = NULL) {
-  validate(need(!is.null(row_var) && row_var %in% names(df), "Please select a valid independent categorical variable."))
-  validate(need(!is.null(col_var) && col_var %in% names(df), "Please select a valid dependent categorical variable."))
-  row_values <- clean_category_value(df[[row_var]])
-  col_values <- clean_category_value(df[[col_var]])
-  keep <- !is.na(row_values) & !is.na(col_values)
-  row_values <- row_values[keep]
-  col_values <- col_values[keep]
-  row_levels <- resolve_category_order(row_values, row_order)
-  col_levels <- resolve_category_order(col_values, col_order)
-  tab <- table(
-    `Independent Category` = factor(row_values, levels = row_levels),
-    `Dependent Category` = factor(col_values, levels = col_levels),
-    useNA = "no"
-  )
-  tab
-}
-
-as_table_df <- function(tab, first_col_name = "Independent Category") {
-  df <- as.data.frame.matrix(tab, stringsAsFactors = FALSE)
-  df <- cbind(setNames(data.frame(rownames(df), stringsAsFactors = FALSE), first_col_name), df)
-  rownames(df) <- NULL
-  df
-}
-
-cramers_v_bias_corrected <- function(tab, chi_sq) {
-  n <- sum(tab)
-  r <- nrow(tab)
-  k <- ncol(tab)
-  if (n <= 1 || r < 2 || k < 2) return(NA_real_)
-  phi2 <- chi_sq / n
-  phi2_corr <- max(0, phi2 - ((k - 1) * (r - 1)) / (n - 1))
-  r_corr <- r - ((r - 1)^2) / (n - 1)
-  k_corr <- k - ((k - 1)^2) / (n - 1)
-  denom <- min(k_corr - 1, r_corr - 1)
-  if (!is.finite(denom) || denom <= 0) return(NA_real_)
-  sqrt(phi2_corr / denom)
-}
-
-compute_nominal_association_measures <- function(tab, chisq_p_value = NA_real_, digits = 4) {
-  n <- sum(tab)
-  r <- nrow(tab)
-  k <- ncol(tab)
-  chi_obj <- suppressWarnings(chisq.test(tab, correct = FALSE))
-  chi_sq <- unname(chi_obj$statistic)
-  phi <- if (n > 0) sqrt(chi_sq / n) else NA_real_
-  cramer <- if (n > 0 && min(r - 1, k - 1) > 0) sqrt(chi_sq / (n * min(r - 1, k - 1))) else NA_real_
-  cramer_corr <- cramers_v_bias_corrected(tab, chi_sq)
-  contingency <- if (n > 0) sqrt(chi_sq / (chi_sq + n)) else NA_real_
-  out <- data.frame(
-    Measure = c("Phi coefficient", "Cramer's V", "Bias-corrected Cramer's V", "Contingency coefficient"),
-    Value = c(phi, cramer, cramer_corr, contingency),
-    `p-value` = c(chisq_p_value, chisq_p_value, chisq_p_value, chisq_p_value),
-    Interpretation = c(
-      ifelse(r == 2 && k == 2, "Recommended for 2 x 2 tables", "Generalized phi; use Cramer's V for larger tables"),
-      "Nominal association strength for r x c tables",
-      "Bias-corrected nominal association strength",
-      "Nominal association based on chi-square"
-    ),
-    stringsAsFactors = FALSE,
-    check.names = FALSE
-  )
-  round_numeric_df(out, digits)
-}
-
-pair_count_from_table <- function(tab) {
-  nr <- nrow(tab)
-  nc <- ncol(tab)
-  counts <- as.matrix(tab)
-  concordant <- 0
-  discordant <- 0
-  tied_x <- 0
-  tied_y <- 0
-  total_pairs <- choose(sum(counts), 2)
-  for (i in seq_len(nr)) {
-    for (j in seq_len(nc)) {
-      nij <- counts[i, j]
-      if (nij <= 0) next
-      # Pairs tied on independent category only
-      if (nc > 1) {
-        tied_x <- tied_x + nij * sum(counts[i, -j, drop = FALSE])
-      }
-      # Pairs tied on dependent category only
-      if (nr > 1) {
-        tied_y <- tied_y + nij * sum(counts[-i, j, drop = FALSE])
-      }
-      # Concordant and discordant pairs
-      if (i < nr && j < nc) {
-        concordant <- concordant + nij * sum(counts[(i + 1):nr, (j + 1):nc, drop = FALSE])
-      }
-      if (i < nr && j > 1) {
-        discordant <- discordant + nij * sum(counts[(i + 1):nr, 1:(j - 1), drop = FALSE])
-      }
-    }
-  }
-  tied_x <- tied_x / 2
-  tied_y <- tied_y / 2
-  list(C = concordant, D = discordant, Tied_Independent = tied_x, Tied_Dependent = tied_y, Total_Pairs = total_pairs)
-}
-
-approx_normal_p <- function(stat, effective_pairs) {
-  if (is.na(stat) || !is.finite(stat) || is.na(effective_pairs) || effective_pairs <= 1) return(NA_real_)
-  se <- sqrt(max(1e-12, (1 - stat^2) / effective_pairs))
-  z <- stat / se
-  2 * stats::pnorm(abs(z), lower.tail = FALSE)
-}
-
-compute_ordinal_association_measures <- function(tab, digits = 4) {
-  pc <- pair_count_from_table(tab)
-  C <- pc$C
-  D <- pc$D
-  Tx <- pc$Tied_Independent
-  Ty <- pc$Tied_Dependent
-  gamma <- if ((C + D) > 0) (C - D) / (C + D) else NA_real_
-  somers_dep_given_indep <- if ((C + D + Ty) > 0) (C - D) / (C + D + Ty) else NA_real_
-  somers_indep_given_dep <- if ((C + D + Tx) > 0) (C - D) / (C + D + Tx) else NA_real_
-  out <- data.frame(
-    Measure = c("Goodman-Kruskal Gamma", "Somers' d: Dependent | Independent", "Somers' d: Independent | Dependent"),
-    Value = c(gamma, somers_dep_given_indep, somers_indep_given_dep),
-    `Approximate p-value` = c(
-      approx_normal_p(gamma, C + D),
-      approx_normal_p(somers_dep_given_indep, C + D + Ty),
-      approx_normal_p(somers_indep_given_dep, C + D + Tx)
-    ),
-    Concordant = c(C, C, C),
-    Discordant = c(D, D, D),
-    `Tied Independent` = c(Tx, Tx, Tx),
-    `Tied Dependent` = c(Ty, Ty, Ty),
-    Note = c(
-      "Ordinal association; category order follows the manual order settings.",
-      "Asymmetric ordinal association using the dependent category as outcome.",
-      "Asymmetric ordinal association using the independent category as outcome."
-    ),
-    stringsAsFactors = FALSE,
-    check.names = FALSE
-  )
-  round_numeric_df(out, digits)
-}
-
-compute_chi_square_test <- function(tab, approach = "Asymptotic", monte_carlo_B = 2000, digits = 4) {
-  approach <- as.character(approach)
-  monte_carlo_B <- safe_number(monte_carlo_B, 2000, 100, 100000)
-  out <- tryCatch({
-    if (approach == "Monte Carlo") {
-      test <- suppressWarnings(chisq.test(tab, correct = FALSE, simulate.p.value = TRUE, B = monte_carlo_B))
-      data.frame(
-        Test = "Pearson Chi-square test",
-        Approach = paste0("Monte Carlo simulation, B = ", monte_carlo_B),
-        Statistic = unname(test$statistic),
-        df = unname(test$parameter),
-        `p-value` = test$p.value,
-        Method = test$method,
-        stringsAsFactors = FALSE,
-        check.names = FALSE
-      )
-    } else if (approach == "Exact") {
-      test <- fisher.test(tab, workspace = 2e8)
-      data.frame(
-        Test = "Fisher's exact test for contingency table",
-        Approach = "Exact conditional test",
-        Statistic = NA_real_,
-        df = NA_real_,
-        `p-value` = test$p.value,
-        Method = test$method,
-        stringsAsFactors = FALSE,
-        check.names = FALSE
-      )
-    } else {
-      test <- suppressWarnings(chisq.test(tab, correct = FALSE))
-      data.frame(
-        Test = "Pearson Chi-square test",
-        Approach = "Asymptotic",
-        Statistic = unname(test$statistic),
-        df = unname(test$parameter),
-        `p-value` = test$p.value,
-        Method = test$method,
-        stringsAsFactors = FALSE,
-        check.names = FALSE
-      )
-    }
-  }, error = function(e) {
-    data.frame(
-      Test = ifelse(approach == "Exact", "Fisher's exact test for contingency table", "Pearson Chi-square test"),
-      Approach = approach,
-      Statistic = NA_real_,
-      df = NA_real_,
-      `p-value` = NA_real_,
-      Method = paste("Test failed:", conditionMessage(e)),
-      stringsAsFactors = FALSE,
-      check.names = FALSE
-    )
-  })
-  round_numeric_df(out, digits)
-}
-
-compute_expected_table <- function(tab, digits = 4) {
-  expected <- tryCatch(suppressWarnings(chisq.test(tab, correct = FALSE)$expected), error = function(e) matrix(NA_real_, nrow = nrow(tab), ncol = ncol(tab), dimnames = dimnames(tab)))
-  round_numeric_df(as_table_df(round(expected, digits)), digits)
-}
-
-compute_standardized_residuals_table <- function(tab, digits = 4) {
-  residuals <- tryCatch(suppressWarnings(chisq.test(tab, correct = FALSE)$stdres), error = function(e) matrix(NA_real_, nrow = nrow(tab), ncol = ncol(tab), dimnames = dimnames(tab)))
-  round_numeric_df(as_table_df(round(residuals, digits)), digits)
 }
 
 # ============================================================
@@ -848,9 +618,7 @@ write_table_sheet <- function(wb, sheet_name, df) {
   }
 }
 
-export_workbook <- function(file, metadata_df, filtered_df, univ_df, bivar_df, bivar_wide_df, univ_chart_df, bivar_chart_df,
-                            assoc_observed_df = NULL, assoc_expected_df = NULL, assoc_residuals_df = NULL,
-                            assoc_chisq_df = NULL, assoc_nominal_df = NULL, assoc_ordinal_df = NULL) {
+export_workbook <- function(file, metadata_df, filtered_df, univ_df, bivar_df, bivar_wide_df, univ_chart_df, bivar_chart_df) {
   wb <- openxlsx::createWorkbook()
   write_table_sheet(wb, "Export Info", metadata_df)
   write_table_sheet(wb, "Filtered Data", filtered_df)
@@ -859,12 +627,6 @@ export_workbook <- function(file, metadata_df, filtered_df, univ_df, bivar_df, b
   write_table_sheet(wb, "Bivariate Table Wide", bivar_wide_df)
   write_table_sheet(wb, "Univariate Chart Data", univ_chart_df)
   write_table_sheet(wb, "Bivariate Chart Data", bivar_chart_df)
-  if (!is.null(assoc_observed_df)) write_table_sheet(wb, "Assoc Observed Table", assoc_observed_df)
-  if (!is.null(assoc_expected_df)) write_table_sheet(wb, "Assoc Expected Table", assoc_expected_df)
-  if (!is.null(assoc_residuals_df)) write_table_sheet(wb, "Assoc Std Residuals", assoc_residuals_df)
-  if (!is.null(assoc_chisq_df)) write_table_sheet(wb, "Assoc Chi-Square", assoc_chisq_df)
-  if (!is.null(assoc_nominal_df)) write_table_sheet(wb, "Assoc Nominal Measures", assoc_nominal_df)
-  if (!is.null(assoc_ordinal_df)) write_table_sheet(wb, "Assoc Ordinal Measures", assoc_ordinal_df)
   openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
 }
 
@@ -1003,7 +765,7 @@ ui <- dashboardPage(
               selectInput("univar_label_mode", "Show information on bars", choices = c("None", "Frequency", "Percentage", "Frequency and Percentage"), selected = "Percentage"),
               selectInput("univar_orientation", "Bar orientation", choices = c("Vertical", "Horizontal"), selected = "Vertical")),
           box(width = 3, title = "Panel and Scale", status = "primary", solidHeader = TRUE,
-              sliderInput("univar_panel_cols", "Panel columns", min = 1, max = 10, value = 2, step = 1),
+              sliderInput("univar_panel_cols", "Panel columns", min = 1, max = 4, value = 2, step = 1),
               selectInput("univar_facet_scales", "Panel axis scale", choices = facet_scale_choices, selected = "free_x"),
               selectInput("univar_legend_position", "Legend position", choices = legend_choices, selected = "Right")),
           box(width = 3, title = "Bar Style", status = "primary", solidHeader = TRUE,
@@ -1014,8 +776,6 @@ ui <- dashboardPage(
           box(width = 3, title = "Title and Labels", status = "primary", solidHeader = TRUE,
               textInput("univar_chart_title", "Title", value = "Univariate Categorical Distribution"),
               textInput("univar_chart_subtitle", "Subtitle", value = "Frequency or percentage distribution by categorical variable"),
-              textInput("univar_x_axis_title", "Category axis title", value = "Category"),
-              textInput("univar_legend_title", "Legend title", value = "Category"),
               checkboxInput("univar_show_labels", "Show text labels", value = TRUE),
               sliderInput("univar_label_size", "Label text size", min = 2, max = 8, value = 3.2, step = 0.2),
               textInput("univar_label_color", "Label text color", value = "#111111"))
@@ -1056,7 +816,7 @@ ui <- dashboardPage(
               selectInput("bivar_bar_position", "Bar position", choices = c("Stacked", "Grouped"), selected = "Stacked"),
               selectInput("bivar_orientation", "Bar orientation", choices = c("Vertical", "Horizontal"), selected = "Vertical")),
           box(width = 3, title = "Panel and Scale", status = "primary", solidHeader = TRUE,
-              sliderInput("bivar_panel_cols", "Panel columns", min = 1, max = 10, value = 2, step = 1),
+              sliderInput("bivar_panel_cols", "Panel columns", min = 1, max = 4, value = 2, step = 1),
               selectInput("bivar_facet_scales", "Panel axis scale", choices = facet_scale_choices, selected = "free_x"),
               selectInput("bivar_legend_position", "Legend position", choices = legend_choices, selected = "Right")),
           box(width = 3, title = "Bar Style", status = "primary", solidHeader = TRUE,
@@ -1067,8 +827,6 @@ ui <- dashboardPage(
           box(width = 3, title = "Title and Labels", status = "primary", solidHeader = TRUE,
               textInput("bivar_chart_title", "Title", value = "Bivariate Categorical Distribution"),
               textInput("bivar_chart_subtitle", "Subtitle", value = "Distribution of dependent categories by independent variables"),
-              textInput("bivar_x_axis_title", "Independent Category title", value = "Independent Category"),
-              textInput("bivar_legend_title", "Dependent Category / legend title", value = "Dependent Category"),
               checkboxInput("bivar_show_labels", "Show text labels", value = TRUE),
               sliderInput("bivar_label_size", "Label text size", min = 2, max = 8, value = 3.0, step = 0.2),
               textInput("bivar_label_color", "Label text color", value = "#111111"),
@@ -1101,50 +859,7 @@ ui <- dashboardPage(
         )
       ),
       tabPanel(
-        "6. Categorical Association Tests",
-        br(),
-        fluidRow(
-          box(width = 4, title = "Variables", status = "primary", solidHeader = TRUE,
-              uiOutput("assoc_independent_ui"),
-              uiOutput("assoc_dependent_ui"),
-              textInput("assoc_independent_order", "Optional Independent Category order", value = ""),
-              textInput("assoc_dependent_order", "Optional Dependent Category order", value = ""),
-              tags$p(class = "small-note", "For Gamma and Somers' d, write category order from lowest to highest when the categories are ordinal.")),
-          box(width = 4, title = "Chi-square Settings", status = "primary", solidHeader = TRUE,
-              selectInput("assoc_chisq_approach", "Chi-square / exact approach",
-                          choices = c("Asymptotic", "Monte Carlo", "Exact"), selected = "Asymptotic"),
-              numericInput("assoc_monte_carlo_B", "Monte Carlo replications", value = 2000, min = 100, max = 100000, step = 100),
-              sliderInput("assoc_digits", "Decimal digits", min = 0, max = 8, value = 4, step = 1),
-              tags$p(class = "small-note", "Exact uses Fisher's exact test for contingency tables. Monte Carlo uses simulated p-value for Pearson chi-square.")),
-          box(width = 4, title = "Export", status = "success", solidHeader = TRUE,
-              actionButton("generate_assoc_excel", "Generate Association Tests Excel", icon = icon("file-excel")),
-              br(), br(), uiOutput("assoc_excel_static_download_ui"),
-              br(), downloadButton("download_assoc_excel_fallback", "Fallback Download Association Excel"))
-        ),
-        fluidRow(
-          box(width = 12, title = "Observed Contingency Table", status = "warning", solidHeader = TRUE,
-              shinycssloaders::withSpinner(DTOutput("assoc_observed_table")))
-        ),
-        fluidRow(
-          box(width = 6, title = "Chi-square / Exact Test Result", status = "info", solidHeader = TRUE,
-              shinycssloaders::withSpinner(DTOutput("assoc_chisq_table"))),
-          box(width = 6, title = "Nominal Association Measures", status = "info", solidHeader = TRUE,
-              shinycssloaders::withSpinner(DTOutput("assoc_nominal_table")))
-        ),
-        fluidRow(
-          box(width = 12, title = "Ordinal Association Measures", status = "primary", solidHeader = TRUE,
-              tags$p("Gamma and Somers' d use the manual category order. P-values are approximate normal-test p-values."),
-              shinycssloaders::withSpinner(DTOutput("assoc_ordinal_table")))
-        ),
-        fluidRow(
-          box(width = 6, title = "Expected Counts", status = "info", solidHeader = TRUE, collapsible = TRUE, collapsed = TRUE,
-              shinycssloaders::withSpinner(DTOutput("assoc_expected_table"))),
-          box(width = 6, title = "Standardized Residuals", status = "info", solidHeader = TRUE, collapsible = TRUE, collapsed = TRUE,
-              shinycssloaders::withSpinner(DTOutput("assoc_residuals_table")))
-        )
-      ),
-      tabPanel(
-        "7. Export",
+        "6. Export",
         br(),
         fluidRow(
           box(width = 12, title = "Export Settings", status = "primary", solidHeader = TRUE,
@@ -1180,7 +895,6 @@ server <- function(input, output, session) {
   univar_export_result <- reactiveVal(NULL)
   bivar_export_result <- reactiveVal(NULL)
   excel_export_result <- reactiveVal(NULL)
-  assoc_excel_export_result <- reactiveVal(NULL)
   
   output$univar_static_download_ui <- renderUI({
     static_export_link_ui(univar_export_result(), "Download Univariate Chart PNG", "Open PNG in new tab", preview_image = TRUE)
@@ -1190,9 +904,6 @@ server <- function(input, output, session) {
   })
   output$excel_static_download_ui <- renderUI({
     static_export_link_ui(excel_export_result(), "Download Frequency Tables Excel", "Open Excel file in new tab", preview_image = FALSE)
-  })
-  output$assoc_excel_static_download_ui <- renderUI({
-    static_export_link_ui(assoc_excel_export_result(), "Download Association Tests Excel", "Open Excel file in new tab", preview_image = FALSE)
   })
   
   current_excel_path <- reactive({
@@ -1384,8 +1095,6 @@ server <- function(input, output, session) {
       legend_title_size = input$univar_legend_title_size,
       legend_text_size = input$univar_legend_text_size,
       x_text_angle = input$univar_x_text_angle,
-      legend_title = input$univar_legend_title,
-      x_axis_title = input$univar_x_axis_title,
       digits = input$univar_digits
     )
   })
@@ -1440,8 +1149,6 @@ server <- function(input, output, session) {
       legend_title_size = input$bivar_legend_title_size,
       legend_text_size = input$bivar_legend_text_size,
       x_text_angle = input$bivar_x_text_angle,
-      legend_title = input$bivar_legend_title,
-      x_axis_title = input$bivar_x_axis_title,
       digits = input$bivar_digits
     )
   })
@@ -1455,113 +1162,6 @@ server <- function(input, output, session) {
   output$bivar_chart_data_table <- renderDT({
     DT::datatable(make_display_safe(bivar_chart_data()), options = list(scrollX = TRUE, pageLength = 15))
   })
-  
-  
-  # ------------------ Categorical association tests ------------------
-  output$assoc_independent_ui <- renderUI({
-    cols <- category_columns()
-    selected <- if (length(input$bivar_independent) > 0) input$bivar_independent[1] else cols[1]
-    selectInput("assoc_independent_var", "Independent categorical variable", choices = cols, selected = selected)
-  })
-  output$assoc_dependent_ui <- renderUI({
-    cols <- category_columns()
-    indep <- input$assoc_independent_var
-    choices <- setdiff(cols, indep)
-    selected <- if (!is.null(input$bivar_dependent) && input$bivar_dependent %in% choices) input$bivar_dependent else choices[1]
-    selectInput("assoc_dependent_var", "Dependent categorical variable", choices = choices, selected = selected)
-  })
-  
-  assoc_contingency_table <- reactive({
-    cols <- category_columns()
-    row_var <- input$assoc_independent_var
-    if (is.null(row_var) || !(row_var %in% cols)) {
-      row_var <- if (!is.null(input$bivar_independent) && length(input$bivar_independent) > 0) input$bivar_independent[1] else cols[1]
-    }
-    col_var <- input$assoc_dependent_var
-    if (is.null(col_var) || !(col_var %in% cols) || identical(col_var, row_var)) {
-      candidate_cols <- setdiff(cols, row_var)
-      col_var <- if (!is.null(input$bivar_dependent) && input$bivar_dependent %in% candidate_cols) input$bivar_dependent else candidate_cols[1]
-    }
-    validate(need(!is.na(row_var) && !is.na(col_var), "Please select two different categorical variables."))
-    make_contingency_table(
-      filtered_data(),
-      row_var = row_var,
-      col_var = col_var,
-      row_order = input$assoc_independent_order,
-      col_order = input$assoc_dependent_order
-    )
-  })
-  
-  assoc_chisq_data <- reactive({
-    compute_chi_square_test(
-      assoc_contingency_table(),
-      approach = input$assoc_chisq_approach,
-      monte_carlo_B = input$assoc_monte_carlo_B,
-      digits = input$assoc_digits
-    )
-  })
-  assoc_nominal_data <- reactive({
-    p_value <- assoc_chisq_data()[["p-value"]][1]
-    compute_nominal_association_measures(assoc_contingency_table(), chisq_p_value = p_value, digits = input$assoc_digits)
-  })
-  assoc_ordinal_data <- reactive({
-    compute_ordinal_association_measures(assoc_contingency_table(), digits = input$assoc_digits)
-  })
-  assoc_observed_data <- reactive({
-    as_table_df(assoc_contingency_table())
-  })
-  assoc_expected_data <- reactive({
-    compute_expected_table(assoc_contingency_table(), digits = input$assoc_digits)
-  })
-  assoc_residuals_data <- reactive({
-    compute_standardized_residuals_table(assoc_contingency_table(), digits = input$assoc_digits)
-  })
-  
-  output$assoc_observed_table <- renderDT({
-    DT::datatable(make_display_safe(assoc_observed_data()), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE)
-  })
-  output$assoc_chisq_table <- renderDT({
-    DT::datatable(make_display_safe(assoc_chisq_data()), options = list(scrollX = TRUE, pageLength = 10), rownames = FALSE)
-  })
-  output$assoc_nominal_table <- renderDT({
-    DT::datatable(make_display_safe(assoc_nominal_data()), options = list(scrollX = TRUE, pageLength = 10), rownames = FALSE)
-  })
-  output$assoc_ordinal_table <- renderDT({
-    DT::datatable(make_display_safe(assoc_ordinal_data()), options = list(scrollX = TRUE, pageLength = 10), rownames = FALSE)
-  })
-  output$assoc_expected_table <- renderDT({
-    DT::datatable(make_display_safe(assoc_expected_data()), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE)
-  })
-  output$assoc_residuals_table <- renderDT({
-    DT::datatable(make_display_safe(assoc_residuals_data()), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE)
-  })
-  
-  export_association_excel <- function(file) {
-    wb <- openxlsx::createWorkbook()
-    write_table_sheet(wb, "Observed Table", assoc_observed_data())
-    write_table_sheet(wb, "Expected Counts", assoc_expected_data())
-    write_table_sheet(wb, "Standardized Residuals", assoc_residuals_data())
-    write_table_sheet(wb, "Chi-Square Exact Test", assoc_chisq_data())
-    write_table_sheet(wb, "Nominal Measures", assoc_nominal_data())
-    write_table_sheet(wb, "Ordinal Measures", assoc_ordinal_data())
-    openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
-  }
-  
-  observeEvent(input$generate_assoc_excel, {
-    result <- export_excel_static_file(
-      export_function = function(path) export_association_excel(path),
-      prefix = "statcal_online_categorical_association_tests"
-    )
-    assoc_excel_export_result(result)
-  })
-  
-  output$download_assoc_excel_fallback <- downloadHandler(
-    filename = function() paste0("statcal_online_categorical_association_tests_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx"),
-    contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    content = function(file) {
-      export_association_excel(file)
-    }
-  )
   
   build_export_metadata <- reactive({
     data.frame(
@@ -1589,13 +1189,7 @@ server <- function(input, output, session) {
       bivar_df = bivar_table_data(),
       bivar_wide_df = bivar_wide_table_data(),
       univ_chart_df = univar_chart_data(),
-      bivar_chart_df = bivar_chart_data(),
-      assoc_observed_df = assoc_observed_data(),
-      assoc_expected_df = assoc_expected_data(),
-      assoc_residuals_df = assoc_residuals_data(),
-      assoc_chisq_df = assoc_chisq_data(),
-      assoc_nominal_df = assoc_nominal_data(),
-      assoc_ordinal_df = assoc_ordinal_data()
+      bivar_chart_df = bivar_chart_data()
     )
   }
   

@@ -135,16 +135,6 @@ safe_number <- function(x, default_value, min_value = NULL, max_value = NULL) {
   out
 }
 
-round_numeric_df <- function(df, digits = 4) {
-  df <- as.data.frame(df, check.names = FALSE)
-  digits <- safe_number(digits, default_value = 4, min_value = 0, max_value = 12)
-  numeric_cols <- vapply(df, is.numeric, logical(1))
-  if (any(numeric_cols)) {
-    df[numeric_cols] <- lapply(df[numeric_cols], function(x) round(x, digits = digits))
-  }
-  df
-}
-
 parse_order_text <- function(x) {
   if (is.null(x) || length(x) == 0 || is.na(x) || !nzchar(trimws(as.character(x)))) return(character(0))
   out <- trimws(unlist(strsplit(as.character(x), ",", fixed = TRUE)))
